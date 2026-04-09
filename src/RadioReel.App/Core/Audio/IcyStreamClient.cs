@@ -1,4 +1,3 @@
-using System;
 using System.IO;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -8,7 +7,7 @@ using Serilog;
 
 namespace RadioReel.App.Core.Audio;
 
-public class IcyStreamClient : IDisposable
+public sealed class IcyStreamClient : IIcyStreamClient
 {
     private static readonly ILogger Logger = Log.ForContext<IcyStreamClient>();
 
@@ -16,11 +15,13 @@ public class IcyStreamClient : IDisposable
     private Stream? _stream;
     private CancellationTokenSource? _cts;
     private Task? _readTask;
+    private bool _disposed;
 
     // ICY headers parsed on connect
     public int MetaInt { get; private set; }
     public string? StationName { get; private set; }
     public string? ContentType { get; private set; }
+    public bool IsConnected { get; private set; }
 
     // Events
     public event EventHandler<byte[]>? AudioDataReceived;
@@ -28,75 +29,86 @@ public class IcyStreamClient : IDisposable
     public event EventHandler<string>? Disconnected;
     public event EventHandler<string>? Error;
 
-    public bool IsConnected => _tcpClient?.Connected == true;
-
     public async Task ConnectAsync(string url, CancellationToken cancellationToken = default)
     {
+        if (_readTask != null)
+            throw new InvalidOperationException("Already connected. Create a new instance to reconnect.");
+
         var uri = new Uri(url);
         var host = uri.Host;
         var port = uri.Port > 0 ? uri.Port : (uri.Scheme == "https" ? 443 : 80);
         var path = uri.PathAndQuery;
         var useSsl = uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase);
 
-        _tcpClient = new TcpClient();
-        var connectTask = _tcpClient.ConnectAsync(host, port, cancellationToken).AsTask();
-        var connectTimeout = TimeSpan.FromSeconds(10);
-        if (await Task.WhenAny(connectTask, Task.Delay(connectTimeout, cancellationToken)) != connectTask)
+        var tcpClient = new TcpClient();
+        try
         {
-            _tcpClient.Close();
-            _tcpClient.Dispose();
-            throw new TimeoutException($"Connection to {host}:{port} timed out.");
+            var connectTask = tcpClient.ConnectAsync(host, port, cancellationToken).AsTask();
+            if (await Task.WhenAny(connectTask, Task.Delay(TimeSpan.FromSeconds(10), cancellationToken)) != connectTask)
+            {
+                throw new TimeoutException($"Connection to {host}:{port} timed out.");
+            }
+            await connectTask; // propagate any connect exception
+
+            Stream networkStream = tcpClient.GetStream();
+
+            if (useSsl)
+            {
+                var sslStream = new SslStream(networkStream);
+                try
+                {
+                    await sslStream.AuthenticateAsClientAsync(host);
+                }
+                catch
+                {
+                    await sslStream.DisposeAsync();
+                    throw;
+                }
+                networkStream = sslStream;
+            }
+
+            // Send ICY request
+            var request = $"GET {path} HTTP/1.0\r\n" +
+                          $"Host: {host}\r\n" +
+                          "Icy-MetaData: 1\r\n" +
+                          "User-Agent: RadioReel/1.0\r\n" +
+                          "Connection: close\r\n" +
+                          "\r\n";
+
+            var requestBytes = Encoding.ASCII.GetBytes(request);
+            await networkStream.WriteAsync(requestBytes, cancellationToken);
+
+            // Assign only after all setup succeeded
+            _tcpClient = tcpClient;
+            _stream = networkStream;
+            tcpClient = null; // ownership transferred
+
+            await ParseHeadersAsync(cancellationToken);
+
+            Logger.Information("[{Station}] Connected. MetaInt={MetaInt}, ContentType={ContentType}",
+                StationName ?? host, MetaInt, ContentType);
+
+            IsConnected = true;
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _readTask = Task.Run(() => ReadLoopAsync(_cts.Token), _cts.Token);
         }
-        await connectTask; // propagate any connect exception
-
-        Stream networkStream = _tcpClient.GetStream();
-
-        if (useSsl)
+        catch
         {
-            var sslStream = new SslStream(networkStream);
-            try
-            {
-                await sslStream.AuthenticateAsClientAsync(host);
-            }
-            catch
-            {
-                await sslStream.DisposeAsync();
-                throw;
-            }
-            networkStream = sslStream;
+            tcpClient?.Dispose();
+            _stream?.Dispose();
+            _stream = null;
+            _tcpClient?.Dispose();
+            _tcpClient = null;
+            throw;
         }
-
-        _stream = networkStream;
-
-        // Send ICY request
-        var request = $"GET {path} HTTP/1.0\r\n" +
-                      $"Host: {host}\r\n" +
-                      "Icy-MetaData: 1\r\n" +
-                      "User-Agent: RadioReel/1.0\r\n" +
-                      "Connection: close\r\n" +
-                      "\r\n";
-
-        var requestBytes = Encoding.ASCII.GetBytes(request);
-        await _stream.WriteAsync(requestBytes, cancellationToken);
-
-        // Parse response headers
-        await ParseHeadersAsync(cancellationToken);
-
-        Logger.Information("[{Station}] Connected. MetaInt={MetaInt}, ContentType={ContentType}",
-            StationName ?? host, MetaInt, ContentType);
-
-        // Start reading loop
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _readTask = Task.Run(() => ReadLoopAsync(_cts.Token), _cts.Token);
     }
 
     private async Task ParseHeadersAsync(CancellationToken ct)
     {
-        var headerBuilder = new StringBuilder();
         var buffer = new byte[1];
         var lineBuffer = new StringBuilder();
+        var isFirstLine = true;
 
-        // Read headers line by line until empty line
         while (true)
         {
             var read = await _stream!.ReadAsync(buffer, ct);
@@ -108,33 +120,34 @@ public class IcyStreamClient : IDisposable
                 var line = lineBuffer.ToString().TrimEnd('\r');
                 if (line.Length == 0) break; // End of headers
 
-                headerBuilder.AppendLine(line);
-
-                // Validate first line: must be "ICY 200 OK" or "HTTP/1.x 200 OK"
-                if (headerBuilder.Length <= line.Length + 2) // First line only
+                if (isFirstLine)
                 {
-                    if (!line.Contains("200"))
+                    // Validate: "ICY 200 OK" or "HTTP/1.x 200 OK"
+                    var parts = line.Split(' ');
+                    if (parts.Length < 2 || parts[1] != "200")
                         throw new InvalidOperationException($"Server returned non-200 status: {line}");
+                    isFirstLine = false;
                 }
-
-                // Parse header fields
-                var colonIdx = line.IndexOf(':');
-                if (colonIdx > 0)
+                else
                 {
-                    var key = line[..colonIdx].Trim().ToLowerInvariant();
-                    var value = line[(colonIdx + 1)..].Trim();
-
-                    switch (key)
+                    var colonIdx = line.IndexOf(':');
+                    if (colonIdx > 0)
                     {
-                        case "icy-metaint":
-                            MetaInt = int.Parse(value);
-                            break;
-                        case "icy-name":
-                            StationName = value;
-                            break;
-                        case "content-type":
-                            ContentType = value;
-                            break;
+                        var key = line[..colonIdx].Trim().ToLowerInvariant();
+                        var value = line[(colonIdx + 1)..].Trim();
+
+                        switch (key)
+                        {
+                            case "icy-metaint":
+                                MetaInt = int.Parse(value);
+                                break;
+                            case "icy-name":
+                                StationName = value;
+                                break;
+                            case "content-type":
+                                ContentType = value;
+                                break;
+                        }
                     }
                 }
 
@@ -147,9 +160,7 @@ public class IcyStreamClient : IDisposable
         }
 
         if (MetaInt <= 0)
-        {
             Logger.Warning("No icy-metaint header received. Metadata extraction disabled.");
-        }
     }
 
     private async Task ReadLoopAsync(CancellationToken ct)
@@ -157,20 +168,19 @@ public class IcyStreamClient : IDisposable
         try
         {
             var audioBuffer = new byte[MetaInt > 0 ? MetaInt : 16384];
-            var bytesRead = 0;
+            var metaLenBuf = new byte[1];
 
             while (!ct.IsCancellationRequested)
             {
                 if (MetaInt > 0)
                 {
                     // Read exactly MetaInt audio bytes
-                    bytesRead = await ReadExactAsync(audioBuffer, MetaInt, ct);
+                    var bytesRead = await ReadExactAsync(audioBuffer, MetaInt, ct);
                     if (bytesRead == 0) break;
 
                     AudioDataReceived?.Invoke(this, audioBuffer[..bytesRead]);
 
                     // Read metadata length byte
-                    var metaLenBuf = new byte[1];
                     if (await ReadExactAsync(metaLenBuf, 1, ct) == 0) break;
 
                     var metaLen = metaLenBuf[0] * 16;
@@ -181,31 +191,36 @@ public class IcyStreamClient : IDisposable
 
                         var metadata = IcyMetadataParser.Parse(metaBuffer);
                         if (metadata.StreamTitle is not null)
-                        {
                             MetadataChanged?.Invoke(this, metadata);
-                        }
                     }
                 }
                 else
                 {
                     // No metadata — just stream audio
-                    bytesRead = await _stream!.ReadAsync(audioBuffer, ct);
+                    var bytesRead = await _stream!.ReadAsync(audioBuffer, ct);
                     if (bytesRead == 0) break;
 
                     AudioDataReceived?.Invoke(this, audioBuffer[..bytesRead]);
                 }
             }
 
+            IsConnected = false;
             Disconnected?.Invoke(this, "Stream ended");
         }
         catch (OperationCanceledException)
         {
+            IsConnected = false;
             Disconnected?.Invoke(this, "Stopped by user");
         }
         catch (Exception ex)
         {
-            Logger.Error(ex, "Error in stream reading loop");
-            Error?.Invoke(this, ex.Message);
+            IsConnected = false;
+            // Suppress spurious errors caused by Dispose() closing the stream
+            if (!_disposed)
+            {
+                Logger.Error(ex, "Error in stream reading loop");
+                Error?.Invoke(this, ex.Message);
+            }
         }
     }
 
@@ -236,6 +251,7 @@ public class IcyStreamClient : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _cts?.Cancel();
         _cts?.Dispose();
         _stream?.Dispose();
