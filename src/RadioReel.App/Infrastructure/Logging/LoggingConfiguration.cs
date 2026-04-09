@@ -11,7 +11,11 @@ public static class LoggingConfiguration
         Directory.CreateDirectory(AppPaths.LogsDir);
 
         return new LoggerConfiguration()
+#if DEBUG
             .MinimumLevel.Debug()
+#else
+            .MinimumLevel.Information()
+#endif
             .WriteTo.File(
                 AppPaths.LogFile,
                 outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff}] [{Level:u3}] [{SourceContext}] {Message}{NewLine}{Exception}",

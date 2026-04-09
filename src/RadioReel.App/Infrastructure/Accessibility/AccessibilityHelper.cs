@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 
@@ -17,6 +18,8 @@ public static class AccessibilityHelper
     {
         _assertiveBlock = assertiveBlock;
         _politeBlock = politeBlock;
+        AutomationProperties.SetLiveSetting(assertiveBlock, AutomationLiveSetting.Assertive);
+        AutomationProperties.SetLiveSetting(politeBlock, AutomationLiveSetting.Polite);
     }
 
     public static void AnnounceAssertive(string message)
@@ -31,9 +34,9 @@ public static class AccessibilityHelper
 
     private static void Announce(TextBlock? block, string message)
     {
-        if (block is null) return;
+        if (block is null || Application.Current is null) return;
 
-        Application.Current.Dispatcher.Invoke(() =>
+        Application.Current.Dispatcher.InvokeAsync(() =>
         {
             // Clear and re-set to trigger the live region announcement
             block.Text = string.Empty;
