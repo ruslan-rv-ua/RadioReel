@@ -110,15 +110,11 @@ public class IcyStreamClient : IDisposable
 
                 headerBuilder.AppendLine(line);
 
-                // Parse first line: ICY 200 OK or HTTP/1.x 200 OK
-                if (!line.Contains("200"))
+                // Validate first line: must be "ICY 200 OK" or "HTTP/1.x 200 OK"
+                if (headerBuilder.Length <= line.Length + 2) // First line only
                 {
-                    if (headerBuilder.Length <= line.Length + 2) // First line
-                    {
-                        // Check if it's an error response
-                        if (!line.StartsWith("ICY") && !line.StartsWith("HTTP"))
-                            throw new InvalidOperationException($"Invalid response: {line}");
-                    }
+                    if (!line.Contains("200"))
+                        throw new InvalidOperationException($"Server returned non-200 status: {line}");
                 }
 
                 // Parse header fields
