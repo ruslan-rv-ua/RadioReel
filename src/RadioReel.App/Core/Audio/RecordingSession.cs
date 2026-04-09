@@ -7,7 +7,7 @@ using Serilog;
 
 namespace RadioReel.App.Core.Audio;
 
-public class RecordingSession : IDisposable
+public sealed class RecordingSession : IDisposable
 {
     private static readonly ILogger Logger = Log.ForContext<RecordingSession>();
     private const int MaxBackoffSec = 300;
@@ -15,9 +15,11 @@ public class RecordingSession : IDisposable
     private readonly StreamEntry _stream;
     private readonly RecordingSettings _recordingSettings;
 
-    private IcyStreamClient? _client;
-    private StreamRecorder? _recorder;
-    private TrackSplitter? _splitter;
+    // Written from RunAsync task, read from StopAsync/Dispose caller thread.
+    // volatile ensures visibility across threads without a full lock.
+    private volatile IIcyStreamClient? _client;
+    private volatile StreamRecorder? _recorder;
+    private volatile TrackSplitter? _splitter;
     private CancellationTokenSource? _cts;
     private Task? _sessionTask;
 
@@ -41,7 +43,7 @@ public class RecordingSession : IDisposable
 
     public void Start()
     {
-        if (Status == RecordingStatus.Recording || Status == RecordingStatus.Connecting)
+        if (Status is RecordingStatus.Recording or RecordingStatus.Connecting or RecordingStatus.Reconnecting)
             return;
 
         _cts = new CancellationTokenSource();
@@ -50,21 +52,23 @@ public class RecordingSession : IDisposable
 
     public async Task StopAsync()
     {
-        if (_cts is null) return;
+        var cts = _cts;
+        if (cts is null) return;
 
-        await _cts.CancelAsync();
+        await cts.CancelAsync();
 
-        if (_sessionTask is not null)
+        var sessionTask = _sessionTask;
+        if (sessionTask is not null)
         {
-            try { await _sessionTask; } catch (OperationCanceledException) { }
+            try { await sessionTask; } catch (OperationCanceledException) { }
         }
 
-        _splitter?.FinalizeRecording();
+        // RunAsync has exited — finalize and dispose remaining resources
+        _splitter?.Dispose();   // calls FinalizeRecording internally
         _recorder?.Dispose();
         _client?.Dispose();
 
         SetStatus(RecordingStatus.Stopped);
-
         Logger.Information("[{Station}] Recording stopped", _stream.Name);
     }
 
@@ -80,34 +84,36 @@ public class RecordingSession : IDisposable
 
         while (!ct.IsCancellationRequested)
         {
+            IIcyStreamClient? client = null;
+            StreamRecorder? recorder = null;
+            TrackSplitter? splitter = null;
+
             try
             {
                 SetStatus(RecordingStatus.Connecting);
 
                 var url = await PlaylistParser.ResolveAsync(_stream.Url);
 
-                _client = new IcyStreamClient();
-                _recorder = new StreamRecorder();
+                client = new IcyStreamClient();
+                recorder = new StreamRecorder();
 
-                var extension = ".mp3"; // default, updated from content-type after connect
+                await client.ConnectAsync(url, ct);
+                ct.ThrowIfCancellationRequested();
 
-                await _client.ConnectAsync(url, ct);
-
-                // Determine extension from content type
-                extension = _client.ContentType?.ToLowerInvariant() switch
+                var extension = client.ContentType?.ToLowerInvariant() switch
                 {
                     "audio/aacp" or "audio/aac" => ".aac",
                     _ => ".mp3"
                 };
 
-                var stationName = _stream.Name.Length > 0 ? _stream.Name : (_client.StationName ?? "Unknown");
+                var stationName = _stream.Name.Length > 0 ? _stream.Name : (client.StationName ?? "Unknown");
 
                 var baseDir = Path.IsPathRooted(_recordingSettings.DefaultOutputDir)
                     ? _recordingSettings.DefaultOutputDir
                     : Path.Combine(AppPaths.BaseDir, _recordingSettings.DefaultOutputDir);
 
-                _splitter = new TrackSplitter(
-                    _recorder,
+                splitter = new TrackSplitter(
+                    recorder,
                     new FileNameTemplate(_recordingSettings.FileNameTemplate),
                     new FileNameTemplate(_recordingSettings.IncompleteFileNameTemplate),
                     baseDir,
@@ -115,43 +121,51 @@ public class RecordingSession : IDisposable
                     extension,
                     _recordingSettings.SkipShortTracksMs);
 
-                _splitter.TrackCompleted += (_, path) => RecordedTracksCount++;
+                splitter.TrackCompleted += (_, _) => RecordedTracksCount++;
+
+                // Publish to fields so StopAsync/Dispose can reach them
+                _client = client;
+                _recorder = recorder;
+                _splitter = splitter;
 
                 // Wire events
-                _client.AudioDataReceived += (_, data) => _splitter.OnAudioData(data);
-                _client.MetadataChanged += (_, meta) =>
+                client.AudioDataReceived += (_, data) => splitter.OnAudioData(data);
+                client.MetadataChanged += (_, meta) =>
                 {
-                    _splitter.OnMetadataChanged(meta);
+                    splitter.OnMetadataChanged(meta);
                     CurrentTrackTitle = meta.StreamTitle;
                     TrackChanged?.Invoke(this, meta);
                     StateChanged?.Invoke(this, EventArgs.Empty);
                 };
-                _client.Error += (_, msg) =>
+
+                // Single Error handler: forward to UI and signal disconnect
+                var disconnectTcs = new TaskCompletionSource();
+                client.Error += (_, msg) =>
                 {
                     ErrorOccurred?.Invoke(this, msg);
+                    disconnectTcs.TrySetResult();
+                };
+                client.Disconnected += (_, reason) =>
+                {
+                    Logger.Information("[{Station}] Disconnected: {Reason}", stationName, reason);
+                    disconnectTcs.TrySetResult();
                 };
 
                 ConnectedAt = DateTime.Now;
                 attempt = 0;
                 SetStatus(RecordingStatus.Recording);
 
-                // Wait for disconnect or cancellation
-                var disconnectTcs = new TaskCompletionSource();
-
-                _client.Disconnected += (_, reason) =>
-                {
-                    Logger.Information("[{Station}] Disconnected: {Reason}", stationName, reason);
-                    disconnectTcs.TrySetResult();
-                };
-
-                _client.Error += (_, _) =>
-                {
-                    disconnectTcs.TrySetResult();
-                };
-
-                // Wait until stream disconnects or user cancels
-                using var reg = ct.Register(() => disconnectTcs.TrySetCanceled());
+                // Wait until stream ends or user cancels.
+                // Use TrySetResult on cancellation (not TrySetCanceled) to avoid
+                // OperationCanceledException racing with TrySetResult from Disconnected.
+                using var reg = ct.Register(() => disconnectTcs.TrySetResult());
                 await disconnectTcs.Task;
+
+                // Now check whether we exited due to cancellation or genuine disconnect
+                ct.ThrowIfCancellationRequested();
+
+                // Genuine disconnect — clean up before reconnecting
+                Logger.Information("[{Station}] Cleaning up after disconnect", stationName);
             }
             catch (OperationCanceledException)
             {
@@ -161,11 +175,6 @@ public class RecordingSession : IDisposable
             {
                 Logger.Warning(ex, "[{Station}] Connection failed (attempt {Attempt})",
                     _stream.Name, attempt + 1);
-
-                _splitter?.FinalizeRecording();
-                _recorder?.Dispose();
-                _client?.Dispose();
-
                 attempt++;
 
                 if (maxAttempts > 0 && attempt >= maxAttempts)
@@ -175,19 +184,25 @@ public class RecordingSession : IDisposable
                     break;
                 }
 
-                // Exponential backoff, capped at MaxBackoffSec
-                var delaySec = Math.Min(baseInterval * (1 << Math.Min(attempt - 1, 10)), MaxBackoffSec);
+                var exponent = Math.Min(attempt - 1, 10);
+                var delaySec = Math.Min(baseInterval * (1 << exponent), MaxBackoffSec);
                 SetStatus(RecordingStatus.Reconnecting);
-                ErrorOccurred?.Invoke(this, $"Перепідключення через {delaySec}с (спроба {attempt})");
+                ErrorOccurred?.Invoke(this, $"Reconnecting in {delaySec}s (attempt {attempt})");
 
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(delaySec), ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
+                try { await Task.Delay(TimeSpan.FromSeconds(delaySec), ct); }
+                catch (OperationCanceledException) { break; }
+            }
+            finally
+            {
+                // Always dispose this iteration's objects before the next iteration or exit.
+                // Null the shared fields first so StopAsync/Dispose don't double-dispose.
+                _client = null;
+                _recorder = null;
+                _splitter = null;
+
+                splitter?.Dispose();   // calls FinalizeRecording
+                recorder?.Dispose();
+                client?.Dispose();
             }
         }
     }
@@ -201,7 +216,10 @@ public class RecordingSession : IDisposable
     public void Dispose()
     {
         _cts?.Cancel();
+        // Block until RunAsync exits so we don't race with its finally block.
+        try { _sessionTask?.GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
         _cts?.Dispose();
+        // Resources are cleaned up by RunAsync's finally block; these are no-ops if already disposed.
         _splitter?.Dispose();
         _recorder?.Dispose();
         _client?.Dispose();
