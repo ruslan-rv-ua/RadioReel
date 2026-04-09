@@ -4,4 +4,5 @@
   <assembly fullname="WindowsBase" />
   <assembly fullname="CommunityToolkit.Mvvm" />
   <assembly fullname="RadioReel.App" />
+  <assembly fullname="System.Xml.Linq" />
 </linker>

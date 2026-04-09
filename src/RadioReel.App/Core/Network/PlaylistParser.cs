@@ -9,6 +9,8 @@ namespace RadioReel.App.Core.Network;
 
 public static class PlaylistParser
 {
+    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
+
     /// <summary>
     /// Resolves a URL that may be a playlist (.m3u/.pls/.asx) to a direct stream URL.
     /// For direct URLs, returns as-is without making a network request.
@@ -23,8 +25,7 @@ public static class PlaylistParser
 
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-            var content = await http.GetStringAsync(url);
+            var content = await _http.GetStringAsync(url);
 
             return ext switch
             {
