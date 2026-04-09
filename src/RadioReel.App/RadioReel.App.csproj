@@ -7,12 +7,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
 
-    <!-- Portable EXE (publish-time settings; trimming skipped during dev builds) -->
+    <!-- Portable EXE: single self-contained file with compression.
+         Trimming is intentionally omitted — WPF is incompatible with IL trimming
+         in .NET 10 (NETSDK1168 is a hard error, not suppressible). -->
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
-    <PublishTrimmed Condition="'$(Configuration)' == 'Release'">true</PublishTrimmed>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-    <TrimmerRootDescriptor>TrimmerRoots.xml</TrimmerRootDescriptor>
 
     <!-- Metadata -->
     <AssemblyName>radioreel</AssemblyName>
