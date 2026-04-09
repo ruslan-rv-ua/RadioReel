@@ -1,10 +1,14 @@
 using System.IO;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using RadioReel.App.Core.Storage;
 
 namespace RadioReel.App.UI.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
+    private readonly DispatcherTimer _diskCheckTimer;
+
     [ObservableProperty]
     private string _connectionStatus = "Відключено";
 
@@ -19,14 +23,34 @@ public partial class MainViewModel : ObservableObject
     public MainViewModel(StreamsViewModel streamsViewModel)
     {
         Streams = streamsViewModel;
+
+        Streams.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(StreamsViewModel.IsRecording))
+            {
+                ActiveRecordingsCount = Streams.IsRecording ? 1 : 0;
+                ConnectionStatus = Streams.IsRecording ? "Запис" : "Відключено";
+            }
+        };
+
         UpdateFreeDiskSpace();
+
+        _diskCheckTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(60)
+        };
+        _diskCheckTimer.Tick += (_, _) => UpdateFreeDiskSpace();
+        _diskCheckTimer.Start();
     }
 
     public void UpdateFreeDiskSpace()
     {
         try
         {
-            var drive = new DriveInfo(Path.GetPathRoot(Core.Storage.AppPaths.BaseDir)!);
+            var root = Path.GetPathRoot(AppPaths.BaseDir);
+            if (root is null) { FreeDiskSpace = "—"; return; }
+
+            var drive = new DriveInfo(root);
             var gb = drive.AvailableFreeSpace / (1024.0 * 1024 * 1024);
             FreeDiskSpace = $"{gb:F1} ГБ вільно";
         }
@@ -36,9 +60,9 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    public Task ShutdownAsync()
+    public async Task ShutdownAsync()
     {
-        // Will be filled in Task 9 when RecordingSession is wired
-        return Task.CompletedTask;
+        _diskCheckTimer.Stop();
+        await Streams.ShutdownAsync();
     }
 }
