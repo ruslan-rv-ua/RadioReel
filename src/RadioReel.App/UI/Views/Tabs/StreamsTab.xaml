@@ -27,7 +27,7 @@
                   TabIndex="2">
             <ListView.View>
                 <GridView>
-                    <GridViewColumn Header="Назва"
+                    <GridViewColumn Header="Назва станції"
                                     DisplayMemberBinding="{Binding Name}"
                                     Width="200" />
                     <GridViewColumn Header="Статус"

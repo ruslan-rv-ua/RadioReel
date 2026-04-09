@@ -34,6 +34,7 @@ public sealed class RecordingSession : IDisposable
     public event EventHandler? StateChanged;
     public event EventHandler<IcyMetadata>? TrackChanged;
     public event EventHandler<string>? ErrorOccurred;
+    public event EventHandler<int>? ReconnectAttempt;
 
     public RecordingSession(StreamEntry stream, RecordingSettings recordingSettings)
     {
@@ -187,6 +188,7 @@ public sealed class RecordingSession : IDisposable
                 var exponent = Math.Min(attempt - 1, 10);
                 var delaySec = Math.Min(baseInterval * (1 << exponent), MaxBackoffSec);
                 SetStatus(RecordingStatus.Reconnecting);
+                ReconnectAttempt?.Invoke(this, attempt);
                 ErrorOccurred?.Invoke(this, $"Reconnecting in {delaySec}s (attempt {attempt})");
 
                 try { await Task.Delay(TimeSpan.FromSeconds(delaySec), ct); }

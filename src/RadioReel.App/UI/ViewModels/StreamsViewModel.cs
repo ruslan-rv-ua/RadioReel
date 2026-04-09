@@ -15,12 +15,14 @@ public partial class StreamsViewModel : ObservableObject
     private static readonly ILogger Logger = Log.ForContext<StreamsViewModel>();
 
     private readonly ISettingsStore _settingsStore;
+    private AppSettings _cachedSettings;
     private RecordingSession? _activeSession;
 
     [ObservableProperty]
     private StreamEntry? _selectedStream;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RemoveStreamCommand))]
     private bool _isRecording;
 
     public ObservableCollection<StreamEntry> Streams { get; } = new();
@@ -28,23 +30,20 @@ public partial class StreamsViewModel : ObservableObject
     public StreamsViewModel(ISettingsStore settingsStore)
     {
         _settingsStore = settingsStore;
+        _cachedSettings = _settingsStore.Load();
         LoadStreams();
     }
 
     private void LoadStreams()
     {
-        var settings = _settingsStore.Load();
-        foreach (var stream in settings.Streams)
-        {
+        foreach (var stream in _cachedSettings.Streams)
             Streams.Add(stream);
-        }
     }
 
     public void SaveStreams()
     {
-        var settings = _settingsStore.Load();
-        settings.Streams = new List<StreamEntry>(Streams);
-        _settingsStore.Save(settings);
+        _cachedSettings.Streams = new List<StreamEntry>(Streams);
+        _settingsStore.Save(_cachedSettings);
     }
 
     [RelayCommand]
@@ -52,14 +51,16 @@ public partial class StreamsViewModel : ObservableObject
     {
         if (SelectedStream is null || IsRecording) return;
 
-        var settings = _settingsStore.Load();
-        _activeSession = new RecordingSession(SelectedStream, settings.Recording);
+        // Capture locals so lambdas don't close over mutable fields (_activeSession, SelectedStream).
+        var session = new RecordingSession(SelectedStream, _cachedSettings.Recording);
+        var stream = SelectedStream;
+        _activeSession = session;
 
-        _activeSession.StateChanged += (_, _) =>
+        session.StateChanged += (_, _) =>
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
-                SelectedStream.Status = _activeSession.Status switch
+                stream.Status = session.Status switch
                 {
                     RecordingStatus.Connecting => "Підключення...",
                     RecordingStatus.Recording => "Запис",
@@ -68,35 +69,45 @@ public partial class StreamsViewModel : ObservableObject
                     RecordingStatus.Error => "Помилка",
                     _ => "Відключено"
                 };
-                IsRecording = _activeSession.Status == RecordingStatus.Recording
-                           || _activeSession.Status == RecordingStatus.Connecting
-                           || _activeSession.Status == RecordingStatus.Reconnecting;
+                IsRecording = session.Status is
+                    RecordingStatus.Recording or
+                    RecordingStatus.Connecting or
+                    RecordingStatus.Reconnecting;
             });
         };
 
-        _activeSession.TrackChanged += (_, meta) =>
+        session.TrackChanged += (_, meta) =>
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
-                SelectedStream.CurrentTrack = meta.StreamTitle ?? "";
+                stream.CurrentTrack = meta.StreamTitle ?? "";
                 AccessibilityHelper.AnnouncePolite(
                     $"Поточний трек: {meta.StreamTitle}");
             });
         };
 
-        _activeSession.ErrorOccurred += (_, msg) =>
+        session.ErrorOccurred += (_, msg) =>
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
                 AccessibilityHelper.AnnounceAssertive(
-                    $"Помилка: {SelectedStream.Name} — {msg}");
+                    $"Помилка: {stream.Name} — {msg}");
             });
         };
 
-        _activeSession.Start();
-        AccessibilityHelper.AnnounceAssertive($"Запис розпочато: {SelectedStream.Name}");
+        session.ReconnectAttempt += (_, attempt) =>
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                AccessibilityHelper.AnnouncePolite(
+                    $"Перепідключення: {stream.Name}, спроба {attempt}");
+            });
+        };
 
-        Logger.Information("[{Station}] Recording started by user", SelectedStream.Name);
+        session.Start();
+        IsRecording = true; // set eagerly; kept in sync by StateChanged callbacks
+        AccessibilityHelper.AnnounceAssertive($"Запис розпочато: {stream.Name}");
+        Logger.Information("[{Station}] Recording started by user", stream.Name);
     }
 
     [RelayCommand]
@@ -133,7 +144,9 @@ public partial class StreamsViewModel : ObservableObject
         {
             var entry = dialog.Result;
             if (string.IsNullOrEmpty(entry.Name))
-                entry.Name = new Uri(entry.Url).Host;
+                entry.Name = Uri.TryCreate(entry.Url, UriKind.Absolute, out var u)
+                    ? u.Host
+                    : entry.Url;
 
             Streams.Add(entry);
             SelectedStream = entry;
@@ -141,7 +154,7 @@ public partial class StreamsViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanRemoveStream))]
     private void RemoveStream()
     {
         if (SelectedStream is null) return;
@@ -149,12 +162,15 @@ public partial class StreamsViewModel : ObservableObject
         SaveStreams();
     }
 
+    private bool CanRemoveStream() => !IsRecording;
+
     public async Task ShutdownAsync()
     {
         if (_activeSession is not null)
         {
             await _activeSession.StopAsync();
             _activeSession.Dispose();
+            _activeSession = null;
         }
         SaveStreams();
     }
