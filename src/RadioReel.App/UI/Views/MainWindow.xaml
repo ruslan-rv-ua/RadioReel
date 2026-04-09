@@ -15,8 +15,9 @@
     </Window.InputBindings>
 
     <Grid>
-        <!-- Hidden live region blocks for screen reader announcements -->
-        <Grid Visibility="Collapsed">
+        <!-- Live region blocks for screen reader announcements (invisible but in UIA tree) -->
+        <Grid Opacity="0" Width="1" Height="1" IsHitTestVisible="False"
+              HorizontalAlignment="Left" VerticalAlignment="Top">
             <TextBlock x:Name="AssertiveLiveRegion"
                        AutomationProperties.LiveSetting="Assertive" />
             <TextBlock x:Name="PoliteLiveRegion"

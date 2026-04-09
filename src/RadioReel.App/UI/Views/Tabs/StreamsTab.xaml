@@ -10,13 +10,13 @@
                     Command="{Binding StartRecordingCommand}"
                     ToolTip="Почати запис (F5)"
                     AutomationProperties.Name="Почати запис"
-                    KeyboardNavigation.TabIndex="0"
+                    TabIndex="0"
                     Margin="0,0,8,0" />
             <Button Content="Зупинити запис"
                     Command="{Binding StopRecordingCommand}"
                     ToolTip="Зупинити запис (F6)"
                     AutomationProperties.Name="Зупинити запис"
-                    KeyboardNavigation.TabIndex="1"
+                    TabIndex="1"
                     Margin="0,0,8,0" />
         </StackPanel>
 
@@ -24,7 +24,7 @@
         <ListView ItemsSource="{Binding Streams}"
                   SelectedItem="{Binding SelectedStream}"
                   AutomationProperties.Name="Список потоків"
-                  KeyboardNavigation.TabIndex="2">
+                  TabIndex="2">
             <ListView.View>
                 <GridView>
                     <GridViewColumn Header="Назва"
@@ -39,7 +39,7 @@
                 </GridView>
             </ListView.View>
             <ListView.ContextMenu>
-                <ContextMenu>
+                <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                     <MenuItem Header="Почати запис"
                               Command="{Binding StartRecordingCommand}"
                               AutomationProperties.Name="Почати запис" />
