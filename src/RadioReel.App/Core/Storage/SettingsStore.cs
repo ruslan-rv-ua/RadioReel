@@ -4,7 +4,7 @@ using Serilog;
 
 namespace RadioReel.App.Core.Storage;
 
-public class SettingsStore
+public sealed class SettingsStore : ISettingsStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

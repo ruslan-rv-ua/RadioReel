@@ -49,7 +49,7 @@ public partial class App : Application
 
     private static void ConfigureServices(IServiceCollection services)
     {
-        services.AddSingleton<Core.Storage.SettingsStore>();
+        services.AddSingleton<Core.Storage.ISettingsStore, Core.Storage.SettingsStore>();
         services.AddSingleton<UI.ViewModels.MainViewModel>();
         services.AddSingleton<UI.ViewModels.StreamsViewModel>();
         services.AddSingleton<UI.Views.MainWindow>();

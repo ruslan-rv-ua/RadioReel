@@ -2,7 +2,7 @@ using RadioReel.App.Core.Storage;
 
 namespace RadioReel.Tests.Core.Storage;
 
-public class SettingsStoreTests
+public class SettingsStoreTests : IDisposable
 {
     private readonly string _tempDir;
 
@@ -11,6 +11,8 @@ public class SettingsStoreTests
         _tempDir = Path.Combine(Path.GetTempPath(), $"RadioReelTest_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
     }
+
+    public void Dispose() => Directory.Delete(_tempDir, recursive: true);
 
     [Fact]
     public void Load_NoFile_ReturnsDefaults()
