@@ -1,0 +1,20 @@
+<UserControl x:Class="RadioReel.App.UI.Views.Panels.StatusBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <StatusBar AutomationProperties.Name="Рядок стану">
+        <StatusBarItem AutomationProperties.Name="Стан з'єднання"
+                       AutomationProperties.LiveSetting="Polite">
+            <TextBlock Text="{Binding ConnectionStatus}" />
+        </StatusBarItem>
+        <Separator />
+        <StatusBarItem AutomationProperties.Name="Активні записи"
+                       AutomationProperties.LiveSetting="Polite">
+            <TextBlock Text="{Binding ActiveRecordingsCount, StringFormat='{}{0} записів'}" />
+        </StatusBarItem>
+        <Separator />
+        <StatusBarItem AutomationProperties.Name="Вільне місце на диску">
+            <TextBlock Text="{Binding FreeDiskSpace}" />
+        </StatusBarItem>
+    </StatusBar>
+</UserControl>

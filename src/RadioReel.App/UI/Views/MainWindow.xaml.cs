@@ -1,12 +1,24 @@
 using System.Windows;
+using RadioReel.App.Infrastructure.Accessibility;
+using RadioReel.App.UI.ViewModels;
 
 namespace RadioReel.App.UI.Views;
 
-/// <summary>Stub — full implementation in Task 2.</summary>
 public partial class MainWindow : Window
 {
-    public MainWindow(UI.ViewModels.MainViewModel mainViewModel)
+    public MainWindow(MainViewModel viewModel)
     {
         InitializeComponent();
+        DataContext = viewModel;
+
+        Loaded += (_, _) =>
+        {
+            AccessibilityHelper.Initialize(AssertiveLiveRegion, PoliteLiveRegion);
+        };
+    }
+
+    private void OnExitClick(object sender, RoutedEventArgs e)
+    {
+        Close();
     }
 }
