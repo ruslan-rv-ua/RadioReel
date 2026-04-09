@@ -1,9 +1,7 @@
 using System.IO;
-using System.Text.RegularExpressions;
-
 namespace RadioReel.App.Core.Metadata;
 
-public partial class FileNameTemplate
+public sealed class FileNameTemplate
 {
     private static readonly char[] IllegalChars = ['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
 

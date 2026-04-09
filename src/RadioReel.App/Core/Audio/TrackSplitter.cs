@@ -91,8 +91,9 @@ public class TrackSplitter : IDisposable
 
         _recorder.CloseFile();
 
-        // Delete short tracks (ads filter)
-        if (previousPath is not null && elapsedMs < _skipShortTracksMs && elapsedMs > 0)
+        // Delete short tracks (ads filter). elapsedMs is always > 0 here since
+        // the stopwatch starts when a track begins and IsRecording guards entry.
+        if (previousPath is not null && _skipShortTracksMs > 0 && elapsedMs < _skipShortTracksMs)
         {
             try
             {
@@ -118,6 +119,6 @@ public class TrackSplitter : IDisposable
 
     public void Dispose()
     {
-        _recorder.CloseFile();
+        FinalizeRecording();
     }
 }
