@@ -1,0 +1,7 @@
+<linker>
+  <assembly fullname="PresentationFramework" />
+  <assembly fullname="PresentationCore" />
+  <assembly fullname="WindowsBase" />
+  <assembly fullname="CommunityToolkit.Mvvm" />
+  <assembly fullname="RadioReel.App" />
+</linker>
