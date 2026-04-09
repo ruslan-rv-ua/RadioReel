@@ -55,13 +55,13 @@ public partial class App : Application
         services.AddSingleton<UI.Views.MainWindow>();
     }
 
-    protected override async void OnExit(ExitEventArgs e)
+    protected override void OnExit(ExitEventArgs e)
     {
         Log.Information("RadioReel shutting down");
 
-        var mainVm = _serviceProvider?.GetService<UI.ViewModels.MainViewModel>();
-        if (mainVm is not null)
-            await mainVm.ShutdownAsync();
+        _serviceProvider?.GetService<UI.ViewModels.MainViewModel>()
+            ?.ShutdownAsync()
+            .GetAwaiter().GetResult();
 
         Log.CloseAndFlush();
         _serviceProvider?.Dispose();

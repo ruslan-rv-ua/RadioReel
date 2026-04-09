@@ -2,8 +2,9 @@ using Serilog;
 
 namespace RadioReel.App.Infrastructure.Logging;
 
-internal static class LoggingConfiguration
+public static class LoggingConfiguration
 {
+    // TODO Task 2: replace hardcoded path with AppPaths.LogFile
     public static ILogger CreateLogger() =>
         new LoggerConfiguration()
             .WriteTo.File(
