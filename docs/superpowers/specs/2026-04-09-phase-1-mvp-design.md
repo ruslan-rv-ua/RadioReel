@@ -70,8 +70,9 @@ TCP client for ICY/SHOUTcast streams. This is the highest-risk component.
 
 **Connection protocol:**
 1. Connect via `TcpClient` (not HttpClient — ICY 200 OK is not valid HTTP)
-2. Send `GET /path HTTP/1.0` with `Icy-MetaData: 1` header
-3. Parse response: `ICY 200 OK` or `HTTP/1.x 200 OK`
+2. For `https://` URLs: wrap `NetworkStream` in `SslStream` before sending request
+3. Send `GET /path HTTP/1.0` with `Icy-MetaData: 1` header
+4. Parse response: `ICY 200 OK` or `HTTP/1.x 200 OK`
 4. Extract `icy-metaint`, `icy-name`, `content-type` from headers
 5. Reading loop: `metaint` audio bytes → 1 byte metadata size → metadata block → audio → ...
 6. Publish events: `AudioDataReceived`, `MetadataChanged`, `Disconnected`, `Error`
@@ -94,7 +95,7 @@ Listens to `MetadataChanged`. On StreamTitle change:
 1. Close current FileStream
 2. Open new file via `FileNameTemplate`
 3. First track marked `_incomplete` (always truncated at start)
-4. Short track filter: `skipShortTracksMs` (default 30s) — if track shorter, file is deleted
+4. Short track filter: `skipShortTracksMs` (default 30s) — measured by wall-clock elapsed time between metadata changes; if track shorter, file is deleted
 
 ### RecordingSession (coordinator)
 
@@ -102,7 +103,7 @@ Creates and wires IcyStreamClient + StreamRecorder + TrackSplitter.
 
 **State machine:** `Idle` → `Connecting` → `Recording` → `Reconnecting` → `Stopped` | `Error`
 
-**Reconnection:** Exponential backoff (5s → 10s → 20s → ...), max attempts configurable (0 = infinite).
+**Reconnection:** Exponential backoff (5s → 10s → 20s → ..., capped at 300s), max attempts configurable (0 = infinite).
 
 **Single `CancellationTokenSource`** controls the entire chain.
 
@@ -190,7 +191,7 @@ public record IcyMetadata(string? StreamTitle, string? StreamUrl);
 ```
 
 **FileNameTemplate:**
-- Variables: `%a` (artist), `%t` (title), `%s` (station), `%d` (date YYYY-MM-DD), `%time` (HH-mm-ss), `%n` (track number)
+- Variables: `%a` (artist), `%t` (title), `%s` (station), `%d` (date YYYY-MM-DD), `%time` (HH-mm-ss), `%n` (track number — per-session counter, resets on each recording start)
 - Sanitization: `\ / : * ? " < > |` → `_`, trim whitespace
 - Collision: append `_2`, `_3` if file exists
 - `\` in template creates subdirectories
