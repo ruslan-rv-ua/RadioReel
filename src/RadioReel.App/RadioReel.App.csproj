@@ -14,6 +14,9 @@
     <SelfContained>true</SelfContained>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
 
+    <!-- No PDB in Release publish -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+
     <!-- Metadata -->
     <AssemblyName>radioreel</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
