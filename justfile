@@ -1,7 +1,10 @@
+set shell := ["powershell.exe", "-NoLogo", "-Command"]
+
 app     := "src/RadioReel.App"
 tests   := "tests/RadioReel.Tests"
 rid     := "win-x64"
-publish := app / "bin/Release/net10.0-windows10.0.22000.0" / rid / "publish"
+publish := app + "/bin/Release/net10.0-windows10.0.22000.0/" + rid + "/publish"
+dist    := "radioreel-dist.zip"
 
 # показати список рецептів
 default:
@@ -29,22 +32,18 @@ publish:
 
 # відкрити папку з релізом у провіднику
 open-publish: publish
-    explorer {{publish}}
+    Start-Process explorer "{{publish}}"
 
 # створити ZIP-архів для поширення (без PDB)
 dist: publish
-    powershell -Command "\
-        $src = '{{publish}}'; \
-        $out = 'radioreel-dist.zip'; \
-        Remove-Item $out -ErrorAction SilentlyContinue; \
-        Compress-Archive -Path (Get-ChildItem $src -Exclude '*.pdb') -DestinationPath $out; \
-        Write-Host \"Створено: $out ($([math]::Round((Get-Item $out).Length/1MB, 1)) MB)\""
+    if (Test-Path "{{dist}}") { Remove-Item "{{dist}}" }
+    Get-ChildItem "{{publish}}" -Exclude "*.pdb" | Compress-Archive -DestinationPath "{{dist}}"
+    Write-Host "Створено: {{dist}} ($([math]::Round((Get-Item '{{dist}}').Length / 1MB, 1)) MB)"
 
 # очистити артефакти збірки
 clean:
     dotnet clean
-    rm -rf src/RadioReel.App/bin src/RadioReel.App/obj
-    rm -rf tests/RadioReel.Tests/bin tests/RadioReel.Tests/obj
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "{{app}}/bin", "{{app}}/obj", "{{tests}}/bin", "{{tests}}/obj"
 
 # відновити NuGet-пакети
 restore:
@@ -55,8 +54,4 @@ ci: restore build test
 
 # перегляд логів застосунку (останні 50 рядків)
 logs:
-    powershell -Command "\
-        $log = Get-ChildItem logs -Filter '*.log' -ErrorAction SilentlyContinue | \
-               Sort-Object LastWriteTime -Descending | Select-Object -First 1; \
-        if ($log) { Get-Content $log.FullName -Tail 50 } \
-        else { Write-Host 'Логів не знайдено (папка logs/ відсутня або порожня)' }"
+    $log = Get-ChildItem logs -Filter "*.log" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if ($log) { Get-Content $log.FullName -Tail 50 } else { Write-Host "Логів не знайдено" }
