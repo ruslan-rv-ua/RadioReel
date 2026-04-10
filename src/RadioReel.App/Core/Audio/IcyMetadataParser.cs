@@ -14,6 +14,7 @@ public static partial class IcyMetadataParser
 
     public static IcyMetadata Parse(byte[] data)
     {
+        ArgumentNullException.ThrowIfNull(data);
         if (data.Length == 0)
             return new IcyMetadata(null, null);
 

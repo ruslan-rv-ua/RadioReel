@@ -44,8 +44,10 @@ public sealed class IcyStreamClient : IIcyStreamClient
         try
         {
             var connectTask = tcpClient.ConnectAsync(host, port, cancellationToken).AsTask();
-            if (await Task.WhenAny(connectTask, Task.Delay(TimeSpan.FromSeconds(10), cancellationToken)) != connectTask)
+            var delayTask = Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+            if (await Task.WhenAny(connectTask, delayTask) != connectTask)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 throw new TimeoutException($"Connection to {host}:{port} timed out.");
             }
             await connectTask; // propagate any connect exception
@@ -139,7 +141,10 @@ public sealed class IcyStreamClient : IIcyStreamClient
                         switch (key)
                         {
                             case "icy-metaint":
-                                MetaInt = int.Parse(value);
+                                if (int.TryParse(value, out var metaInt))
+                                    MetaInt = metaInt;
+                                else
+                                    Logger.Warning("Malformed icy-metaint value: {Value}. Metadata extraction disabled.", value);
                                 break;
                             case "icy-name":
                                 StationName = value;
