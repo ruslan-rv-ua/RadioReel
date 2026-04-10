@@ -69,6 +69,7 @@
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
         <Setter Property="CaretBrush" Value="{StaticResource ForegroundBrush}" />
         <Setter Property="Padding" Value="4,2" />
+        <Setter Property="SelectionBrush" Value="{StaticResource AccentBrush}" />
         <Setter Property="FocusVisualStyle">
             <Setter.Value>
                 <Style>
@@ -102,6 +103,7 @@
     </Style>
 
     <Style TargetType="MenuItem">
+        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
         <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}" />
         <Setter Property="FocusVisualStyle">
             <Setter.Value>
@@ -117,6 +119,12 @@
                 </Style>
             </Setter.Value>
         </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsHighlighted" Value="True">
+                <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+                <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}" />
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <!-- StatusBar -->
@@ -164,6 +172,11 @@
     </Style>
 
     <!-- TabControl -->
+    <Style TargetType="TabControl">
+        <Setter Property="Background" Value="{StaticResource BackgroundBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    </Style>
+
     <Style TargetType="TabItem">
         <Setter Property="Foreground" Value="{StaticResource ForegroundBrush}" />
         <Setter Property="FocusVisualStyle">

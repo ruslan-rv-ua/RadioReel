@@ -27,6 +27,7 @@
         <DockPanel>
             <!-- Menu -->
             <Menu DockPanel.Dock="Top"
+                  KeyboardNavigation.TabNavigation="Once"
                   AutomationProperties.Name="Головне меню">
                 <MenuItem Header="Файл" AutomationProperties.Name="Файл">
                     <MenuItem Header="Вихід"
